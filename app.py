@@ -199,11 +199,20 @@ if st.session_state.current_page == "DASHBOARD":
     plot_df = df[(df['strike'] >= min(strikes)) & (df['strike'] <= max(strikes))]
     
     if st.session_state.radar_mode == "VELOCITY":
-        vel_data = np.random.uniform(-10, 10, (len(plot_df), 10))
-        # Added Smart Labels to Velocity
-        text_vals = [[f"{val:+.1f}" if abs(val) > 7.5 else "" for val in row] for row in vel_data]
-        fig_main = go.Figure(data=go.Heatmap(z=vel_data, y=plot_df['strike'], colorscale='RdYlGn', text=text_vals, texttemplate="%{text}", hovertemplate="Strike: %{y}<br>Velocity: %{z:.2f}<extra></extra>"))
-        fig_main.update_layout(xaxis_title="LOOKBACK PERIODS", yaxis_title="STRIKE PRICE", yaxis=dict(dtick=1))
+        dual_vel = st.toggle("Dual View (SPY + QQQ Velocity)", value=False)
+        if dual_vel:
+            fig_main = make_subplots(rows=1, cols=2, subplot_titles=("SPY VELOCITY", "QQQ VELOCITY"), horizontal_spacing=0.1)
+            for i, (asset, range_s) in enumerate([("SPY", np.arange(580, 605, 0.5)), ("QQQ", np.arange(495, 520, 0.5))], 1):
+                v_data = np.random.uniform(-10, 10, (len(range_s), 10))
+                v_text = [[f"{v:+.1f}" if abs(v) > 7.5 else "" for v in r] for r in v_data]
+                fig_main.add_trace(go.Heatmap(z=v_data, y=range_s, colorscale='RdYlGn', text=v_text, texttemplate="%{text}", showscale=(i==2)), row=1, col=i)
+            fig_main.update_layout(xaxis_title="LOOKBACK", yaxis_title="STRIKE", xaxis2_title="LOOKBACK")
+        else:
+            vel_data = np.random.uniform(-10, 10, (len(plot_df), 10))
+            text_vals = [[f"{val:+.1f}" if abs(val) > 7.5 else "" for val in row] for row in vel_data]
+            fig_main = go.Figure(data=go.Heatmap(z=vel_data, y=plot_df['strike'], colorscale='RdYlGn', text=text_vals, texttemplate="%{text}", hovertemplate="Strike: %{y}<br>Velocity: %{z:.2f}<extra></extra>"))
+            fig_main.update_layout(xaxis_title="LOOKBACK PERIODS", yaxis_title="STRIKE PRICE", yaxis=dict(dtick=1))
+
     elif st.session_state.radar_mode == "SURF":
         days = np.array([1, 7, 30, 60, 90])
         z_vol = np.array([plot_df['iv'].values * (1 + 0.05 * np.log(d)) for d in days])
@@ -220,11 +229,20 @@ if st.session_state.current_page == "DASHBOARD":
         fig_main = go.Figure(data=[go.Surface(z=z_delta, x=plot_df['strike'], y=time_steps, colorscale='Portland', customdata=plot_df['es_strike'], hovertemplate=f"Strike: %{{x}}<br>{equiv_label}: %{{customdata:.2f}}<br>Time: %{{y}}<br>Delta: %{{z:.2f}}<extra></extra>")])
         fig_main.update_layout(scene=dict(xaxis_title="STRIKE", yaxis_title="TIME", zaxis_title="NET DELTA"))
     elif st.session_state.radar_mode == "HEAT":
+        dual_heat = st.toggle("Dual View (SPY + QQQ Heatmap)", value=False)
         dtes = ["0DTE", "1DTE", "7DTE", "14DTE", "30DTE", "60DTE", "90DTE"]
-        heat_data = np.random.uniform(-500, 1500, (len(plot_df), len(dtes)))
-        text_vals = [[f"{val:,.0f}" for val in row] for row in heat_data]
-        fig_main = go.Figure(data=go.Heatmap(z=heat_data, x=dtes, y=plot_df['strike'], colorscale='Magma', text=text_vals, texttemplate="%{text}", customdata=plot_df['es_strike'], hovertemplate=f"Strike: %{{y}}<br>{equiv_label}: %{{customdata:.2f}}<br>DTE: %{{x}}<br>GEX: %{{z:,.0f}}<extra></extra>"))
-        fig_main.update_layout(xaxis_title="EXPIRATION (DTE)", yaxis_title="STRIKE PRICE", yaxis=dict(dtick=1))
+        if dual_heat:
+            fig_main = make_subplots(rows=1, cols=2, subplot_titles=("SPY GEX TERM", "QQQ GEX TERM"), horizontal_spacing=0.1)
+            for i, (asset, range_s) in enumerate([("SPY", np.arange(580, 605, 0.5)), ("QQQ", np.arange(495, 520, 0.5))], 1):
+                h_data = np.random.uniform(-500, 1500, (len(range_s), len(dtes)))
+                h_text = [[f"{v:,.0f}" for v in r] for r in h_data]
+                fig_main.add_trace(go.Heatmap(z=h_data, x=dtes, y=range_s, colorscale='Magma', text=h_text, texttemplate="%{text}", showscale=(i==2)), row=1, col=i)
+            fig_main.update_layout(xaxis_title="DTE", yaxis_title="STRIKE", xaxis2_title="DTE")
+        else:
+            heat_data = np.random.uniform(-500, 1500, (len(plot_df), len(dtes)))
+            text_vals = [[f"{val:,.0f}" for val in row] for row in heat_data]
+            fig_main = go.Figure(data=go.Heatmap(z=heat_data, x=dtes, y=plot_df['strike'], colorscale='Magma', text=text_vals, texttemplate="%{text}", customdata=plot_df['es_strike'], hovertemplate=f"Strike: %{{y}}<br>{equiv_label}: %{{customdata:.2f}}<br>DTE: %{{x}}<br>GEX: %{{z:,.0f}}<extra></extra>"))
+            fig_main.update_layout(xaxis_title="EXPIRATION (DTE)", yaxis_title="STRIKE PRICE", yaxis=dict(dtick=1))
     else:
         fig_main = go.Figure()
         weight_mode = st.toggle("Delta-Weighted GEX", value=False)
@@ -244,7 +262,8 @@ if st.session_state.current_page == "DASHBOARD":
         for lvl, clr, txt, dash in levels:
             fig_main.add_hline(y=lvl, line_dash=dash, line_color=clr, annotation_text=f" {txt}", annotation_position="right")
 
-    fig_main.update_layout(height=700, template="plotly_dark", showlegend=False, margin=dict(t=10, r=60), hovermode="closest")
+    # Layout Adjustment for Title Visibility
+    fig_main.update_layout(height=700, template="plotly_dark", showlegend=False, margin=dict(t=80, r=60, b=40, l=60), hovermode="closest")
     st.plotly_chart(fig_main, use_container_width=True)
 
     # --- KEY LEVELS TABLE ---
