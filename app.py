@@ -68,8 +68,6 @@ st.markdown("""
         .ops-tag { font-family: 'JetBrains Mono'; color: #00C805; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 15px; opacity: 0.8; }
         .ops-label { font-size: 11px; color: #555; text-transform: uppercase; font-weight: 800; margin-top: 20px; letter-spacing: 1px; }
         .ops-content { font-size: 13px; color: #B0B0B0; line-height: 1.6; margin-top: 5px; }
-        .math-box { background: #0E1117; padding: 15px; border-radius: 4px; border: 1px solid #222; margin: 10px 0; }
-        .disclaimer-box { font-size: 11px; color: #444; margin-top: 50px; border-top: 1px solid #222; padding-top: 20px; line-height: 1.5; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -97,6 +95,8 @@ if asset_toggle == "SPY":
     vol_trigger = 588.5
     equiv_label = "ES Equiv"
     equiv_mult = 10
+    vvix = 84.20
+    iv_rv_spread = 2.45
 else:
     strikes = np.arange(495, 520, 0.5)
     spot_price = 508.40
@@ -107,7 +107,10 @@ else:
     vol_trigger = 502.0
     equiv_label = "NQ Equiv"
     equiv_mult = 47.5
+    vvix = 92.15
+    iv_rv_spread = -1.12
 
+# Time-series generation
 times = pd.date_range(start='9:30', periods=30, freq='10min')
 price_walk = spot_price + np.cumsum(np.random.normal(0, 0.4, 30))
 t_series = pd.DataFrame({'Time': times, 'Price': price_walk, 'GEX': np.random.uniform(-400, 900, 30), 'DEX': np.random.uniform(20, 150, 30), 'CNV': np.random.uniform(-150, 350, 30)})
@@ -115,50 +118,76 @@ t_series = pd.DataFrame({'Time': times, 'Price': price_walk, 'GEX': np.random.un
 data = []
 for s in strikes:
     is_major = 3.5 if s % 5 == 0 else (1.8 if s % 2.5 == 0 else 0.6)
+    dist = abs(s - spot_price)
     call_g = np.exp(-(abs(s - (spot_price + 3))**2)/12) * is_major
     put_g = np.exp(-(abs(s - (spot_price - 4))**2)/12) * is_major
     es_val = (s * equiv_mult) + basis
+    
+    # Second-order Greeks (Simulated)
+    vomma = (call_g + put_g) * (dist/spot_price) * 10
+    zomma = (call_g - put_g) * (1 / (dist + 0.1))
+    velocity = np.random.normal(0, 5) # Net change in GEX per tick
+    
     data.append({
-        'strike': s, 
-        'es_strike': es_val,
-        'call_gex': call_g * 6000, 
-        'put_gex': -put_g * 6000, 
-        'vanna': (call_g + put_g) * 0.4, 
-        'oi': int((call_g + put_g) * 60000), 
+        'strike': s, 'es_strike': es_val,
+        'call_gex': call_g * 6000, 'put_gex': -put_g * 6000, 
+        'vanna': (call_g + put_g) * 0.4, 'oi': int((call_g + put_g) * 60000), 
         'vol_call': np.random.randint(1500, 9000) * call_g, 
         'vol_put': np.random.randint(1500, 9000) * put_g, 
-        'vega': (call_g + put_g) * 0.25, 
-        'charm': (call_g - put_g) * 0.12, 
-        'iv': 0.15 + (abs(s - spot_price)**2 * 0.0008)
+        'vega': (call_g + put_g) * 0.25, 'charm': (call_g - put_g) * 0.12, 
+        'iv': 0.15 + (dist**2 * 0.0008),
+        'vomma': vomma, 'zomma': zomma, 'velocity': velocity
     })
 df = pd.DataFrame(data)
 
-flow_ratio_val = df["vol_call"].sum()/(df["vol_call"].sum()+df["vol_put"].sum())
-flow_color = "#00C805" if flow_ratio_val >= 0.50 else "#FF3B3B"
-
+# Regime Logic Calculation
 is_long_gamma = spot_price > gamma_flip_level
 regime_color = "#00C805" if is_long_gamma else "#FF3B3B"
 regime_label = "STABLE / LONG GAMMA" if is_long_gamma else "VOLATILE / SHORT GAMMA"
 
+# Flowing Structural Bias Logic
+total_vomma = df["vomma"].sum()
+if is_long_gamma:
+    bias_note = "ACCUMULATE / BUY DIPS"
+    bias_color = "#00FF00"
+elif not is_long_gamma and total_vomma > 5:
+    bias_note = "PROTECTIVE / LONG VOL"
+    bias_color = "#FF3B3B"
+else:
+    bias_note = "NEUTRAL / SCALP ONLY"
+    bias_color = "#FFD700"
+
 # 4. DASHBOARD PAGE
 if st.session_state.current_page == "DASHBOARD":
     st.sidebar.markdown("<p class='sidebar-label'>Structural Context</p>", unsafe_allow_html=True)
-    st.sidebar.markdown(f'<div class="data-block"><div class="data-label">Flow Ratio</div><div class="data-value" style="color:{flow_color}">{flow_ratio_val:.2f}</div></div><div class="data-block"><div class="data-label">Momentum Wall</div><div class="data-value">${momentum_wall}</div></div><div class="data-block"><div class="data-label">Max Pain</div><div class="data-value">${max_pain}</div></div><div class="data-block"><div class="data-label">Zero Gamma</div><div class="data-value">${gamma_flip_level}</div></div>', unsafe_allow_html=True)
+    st.sidebar.markdown(f'<div class="data-block"><div class="data-label">Vomma (Vol Sens)</div><div class="data-value">{df["vomma"].sum():.2f}</div></div><div class="data-block"><div class="data-label">Zomma (Gamma Accel)</div><div class="data-value">{df["zomma"].sum():.2f}</div></div>', unsafe_allow_html=True)
     
-    st.sidebar.markdown("<p class='sidebar-label'>Risk & Volatility</p>", unsafe_allow_html=True)
-    st.sidebar.markdown(f'<div class="data-block"><div class="data-label">Vol Trigger</div><div class="data-value" style="color:#FF3B3B">${vol_trigger}</div></div><div class="data-block"><div class="data-label">Vanna Exposure</div><div class="data-value">${df["vanna"].sum():.2f}M</div></div><div class="data-block"><div class="data-label">Total OI</div><div class="data-value">{df["oi"].sum():,}</div></div>', unsafe_allow_html=True)
+    st.sidebar.markdown("<p class='sidebar-label'>Regime Indicators</p>", unsafe_allow_html=True)
+    st.sidebar.markdown(f'<div class="data-block"><div class="data-label">VVIX (Vol of Vol)</div><div class="data-value" style="color:#00FFFF">{vvix}</div></div><div class="data-block"><div class="data-label">IV-RV Spread</div><div class="data-value">{iv_rv_spread}%</div></div>', unsafe_allow_html=True)
 
     st.sidebar.markdown("<p class='sidebar-label'>Topography Scan</p>", unsafe_allow_html=True)
     topo = df[(df['strike'] > spot_price - 8) & (df['strike'] < spot_price + 8)].sort_values('strike')
     z_topo = np.outer(np.linspace(1, 0.1, 10), (np.abs(topo['call_gex']) + np.abs(topo['put_gex'])).values)
     st.sidebar.plotly_chart(go.Figure(data=[go.Surface(z=z_topo, x=topo['strike'].values, colorscale='Viridis', showscale=False)]).update_layout(height=180, margin=dict(l=0,r=0,b=0,t=0), template="plotly_dark"), use_container_width=True)
 
-    st.markdown(f'<div class="regime-container"><div style="font-size: 11px; color: #808495; text-transform: uppercase;">Market Regime: {asset_toggle}</div><div style="font-family: \'JetBrains Mono\'; font-size: 24px; font-weight: 700; color: {regime_color};">{regime_label}</div></div>', unsafe_allow_html=True)
+    # UPDATED: Flowing Regime Header
+    st.markdown(f"""
+        <div class="regime-container" style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                <div style="font-size: 11px; color: #808495; text-transform: uppercase;">Market Regime: {asset_toggle}</div>
+                <div style="font-family: 'JetBrains Mono'; font-size: 24px; font-weight: 700; color: {regime_color};">{regime_label}</div>
+            </div>
+            <div style="text-align: right;">
+                <div style="font-size: 10px; color: #808495; letter-spacing: 1px;">STRUCTURAL BIAS</div>
+                <div style="font-family: 'JetBrains Mono'; font-size: 18px; font-weight: 700; color: {bias_color};">{bias_note}</div>
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
 
     if 'radar_mode' not in st.session_state: st.session_state.radar_mode = "GEX"
-    m_cols = st.columns(6)
-    modes = ["GEX", "VOL", "HEAT", "SURF", "SMILE", "DELTA"]
-    labels = ["OI / GEX", "VOLUME", "HEATMAP", "SURFACE", f"{asset_toggle} SMILE", "NET DELTA"]
+    m_cols = st.columns(7) 
+    modes = ["GEX", "VOL", "HEAT", "VELOCITY", "SURF", "SMILE", "DELTA"]
+    labels = ["OI / GEX", "VOLUME", "HEATMAP", "VELOCITY", "SURFACE", "SMILE", "NET DELTA"]
     
     for col, mode, label in zip(m_cols, modes, labels):
         with col:
@@ -169,7 +198,13 @@ if st.session_state.current_page == "DASHBOARD":
 
     plot_df = df[(df['strike'] >= min(strikes)) & (df['strike'] <= max(strikes))]
     
-    if st.session_state.radar_mode == "SURF":
+    if st.session_state.radar_mode == "VELOCITY":
+        vel_data = np.random.uniform(-10, 10, (len(plot_df), 10))
+        # Added Smart Labels to Velocity
+        text_vals = [[f"{val:+.1f}" if abs(val) > 7.5 else "" for val in row] for row in vel_data]
+        fig_main = go.Figure(data=go.Heatmap(z=vel_data, y=plot_df['strike'], colorscale='RdYlGn', text=text_vals, texttemplate="%{text}", hovertemplate="Strike: %{y}<br>Velocity: %{z:.2f}<extra></extra>"))
+        fig_main.update_layout(xaxis_title="LOOKBACK PERIODS", yaxis_title="STRIKE PRICE", yaxis=dict(dtick=1))
+    elif st.session_state.radar_mode == "SURF":
         days = np.array([1, 7, 30, 60, 90])
         z_vol = np.array([plot_df['iv'].values * (1 + 0.05 * np.log(d)) for d in days])
         fig_main = go.Figure(data=[go.Surface(z=z_vol, x=plot_df['strike'], y=days, colorscale='Thermal', customdata=plot_df['es_strike'], hovertemplate=f"Strike: %{{x}}<br>{equiv_label}: %{{customdata:.2f}}<br>DTE: %{{y}}<br>IV: %{{z:.2f}}<extra></extra>")])
@@ -192,9 +227,13 @@ if st.session_state.current_page == "DASHBOARD":
         fig_main.update_layout(xaxis_title="EXPIRATION (DTE)", yaxis_title="STRIKE PRICE", yaxis=dict(dtick=1))
     else:
         fig_main = go.Figure()
+        weight_mode = st.toggle("Delta-Weighted GEX", value=False)
+        w_mult = 1.0
+        
         if st.session_state.radar_mode == "GEX":
-            fig_main.add_trace(go.Bar(y=plot_df['strike'], x=plot_df['call_gex'], orientation='h', marker=dict(color='#00C805', line=dict(color='#00FF00', width=1)), name="CALL GEX", customdata=plot_df['es_strike'], hovertemplate=f"Strike: %{{y}}<br>{equiv_label}: %{{customdata:.2f}}<br>Call GEX: %{{x:,.0f}}<extra></extra>"))
-            fig_main.add_trace(go.Bar(y=plot_df['strike'], x=plot_df['put_gex'], orientation='h', marker=dict(color='#FF3B3B', line=dict(color='#FF5555', width=1)), name="PUT GEX", customdata=plot_df['es_strike'], hovertemplate=f"Strike: %{{y}}<br>{equiv_label}: %{{customdata:.2f}}<br>Put GEX: %{{x:,.0f}}<extra></extra>"))
+            if weight_mode: w_mult = np.clip(1 - (abs(plot_df['strike'] - spot_price) / 10), 0.1, 1)
+            fig_main.add_trace(go.Bar(y=plot_df['strike'], x=plot_df['call_gex']*w_mult, orientation='h', marker=dict(color='#00C805', line=dict(color='#00FF00', width=1)), name="CALL GEX", customdata=plot_df['es_strike'], hovertemplate=f"Strike: %{{y}}<br>{equiv_label}: %{{customdata:.2f}}<br>Call GEX: %{{x:,.0f}}<extra></extra>"))
+            fig_main.add_trace(go.Bar(y=plot_df['strike'], x=plot_df['put_gex']*w_mult, orientation='h', marker=dict(color='#FF3B3B', line=dict(color='#FF5555', width=1)), name="PUT GEX", customdata=plot_df['es_strike'], hovertemplate=f"Strike: %{{y}}<br>{equiv_label}: %{{customdata:.2f}}<br>Put GEX: %{{x:,.0f}}<extra></extra>"))
             fig_main.update_layout(xaxis_title="NET GEX ($MM)", yaxis_title="STRIKE PRICE", bargap=0.1)
         else:
             fig_main.add_trace(go.Bar(y=plot_df['strike'], x=plot_df['vol_call'], orientation='h', marker=dict(color='#00C805', line=dict(color='#00FF00', width=1)), name="CALL VOL", customdata=plot_df['es_strike'], hovertemplate=f"Strike: %{{y}}<br>{equiv_label}: %{{customdata:.2f}}<br>Call Vol: %{{x:,.0f}}<extra></extra>"))
@@ -208,9 +247,8 @@ if st.session_state.current_page == "DASHBOARD":
     fig_main.update_layout(height=700, template="plotly_dark", showlegend=False, margin=dict(t=10, r=60), hovermode="closest")
     st.plotly_chart(fig_main, use_container_width=True)
 
-    # --- KEY LEVELS TABLE (CSS REPLACED GRADIENT) ---
+    # --- KEY LEVELS TABLE ---
     st.markdown("### Key Levels Table")
-    
     table_df = df.copy()
     table_df['Net GEX'] = table_df['call_gex'] + table_df['put_gex']
     table_df['Abs GEX'] = table_df['call_gex'].abs() + table_df['put_gex'].abs()
@@ -230,10 +268,9 @@ if st.session_state.current_page == "DASHBOARD":
         table_df['dist_abs'] = table_df['strike'].sub(spot_price).abs()
         display_df = table_df.sort_values('dist_abs').head(10).drop(columns=['dist_abs'])
 
-    display_df = display_df[['strike', 'es_strike', 'call_gex', 'put_gex', 'Net GEX', 'Abs GEX', 'Dist (%)']]
-    display_df.columns = ['Strike', equiv_label, 'Call GEX', 'Put GEX', 'Net GEX', 'Abs GEX', 'Dist %']
+    display_df = display_df[['strike', 'es_strike', 'call_gex', 'put_gex', 'Net GEX', 'Abs GEX', 'Dist (%)', 'velocity']]
+    display_df.columns = ['Strike', equiv_label, 'Call GEX', 'Put GEX', 'Net GEX', 'Abs GEX', 'Dist %', 'Velocity']
     
-    # Custom CSS-based coloring function
     def style_gex_rows(val):
         color = '#00C805' if val > 0 else '#FF3B3B' if val < 0 else '#8B949E'
         return f'color: {color}; font-weight: bold;'
@@ -241,7 +278,7 @@ if st.session_state.current_page == "DASHBOARD":
     st.dataframe(
         display_df.style.format({
             'Strike': '{:.1f}', equiv_label: '{:.2f}', 'Call GEX': '{:,.0f}', 
-            'Put GEX': '{:,.0f}', 'Net GEX': '{:,.0f}', 'Abs GEX': '{:,.0f}', 'Dist %': '{:+.2f}%'
+            'Put GEX': '{:,.0f}', 'Net GEX': '{:,.0f}', 'Abs GEX': '{:,.0f}', 'Dist %': '{:+.2f}%', 'Velocity': '{:+.2f}'
         }).map(style_gex_rows, subset=['Net GEX']),
         use_container_width=True, hide_index=True
     )
@@ -258,24 +295,24 @@ if st.session_state.current_page == "DASHBOARD":
         fig_ts.add_trace(go.Scatter(x=t_series['Time'], y=t_series['Price'], line=dict(color='white', width=1, dash='dot'), opacity=0.4), secondary_y=True)
         st.plotly_chart(fig_ts.update_layout(height=280, template="plotly_dark", showlegend=False, title=title, margin=dict(t=30, b=20)), use_container_width=True)
 
-    # --- GREEK SENSITIVITY MATRIX (CHARM/VEGA) ---
+    # --- GREEK SENSITIVITY MATRIX ---
     st.markdown("### Greek Sensitivity Matrix")
     c1, c2 = st.columns(2)
-    with c1: st.plotly_chart(px.bar(plot_df, x='strike', y='vega', title="VEGA", color_discrete_sequence=['#00FFFF']).update_layout(template="plotly_dark", height=300), use_container_width=True)
-    with c2: st.plotly_chart(px.line(plot_df, x='strike', y='charm', title="CHARM", color_discrete_sequence=['#FF00FF']).update_layout(template="plotly_dark", height=300), use_container_width=True)
+    with c1: st.plotly_chart(px.bar(plot_df, x='strike', y='vomma', title="VOMMA (Vol Sens)", color_discrete_sequence=['#00FFFF']).update_layout(template="plotly_dark", height=300), use_container_width=True)
+    with c2: st.plotly_chart(px.line(plot_df, x='strike', y='zomma', title="ZOMMA (Gamma Accel)", color_discrete_sequence=['#FF00FF']).update_layout(template="plotly_dark", height=300), use_container_width=True)
 
 elif st.session_state.current_page == "OPERATIONS":
     st.markdown("<h2 style='font-family: JetBrains Mono; color:#00C805;'>QUANTITATIVE SPECIFICATIONS</h2>", unsafe_allow_html=True)
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown('<div class="ops-card"><div class="ops-tag">Instrument_01</div><div class="ops-title">NET GAMMA EXPOSURE (GEX)</div>', unsafe_allow_html=True)
-        st.latex(r"GEX = \sum \left( OI \cdot \Gamma \cdot 100 \cdot S^2 \right)")
-        st.markdown('<div class="ops-label">Operational Thresholds</div><div class="ops-content"><b>Positive GEX:</b> Structural stability. <br><b>Negative GEX:</b> Structural instability.</div></div><br>', unsafe_allow_html=True)
+        st.markdown('<div class="ops-card"><div class="ops-tag">Instrument_01</div><div class="ops-title">VOMMA</div>', unsafe_allow_html=True)
+        st.latex(r"Vomma = \frac{\partial \text{Vega}}{\partial \sigma}")
+        st.markdown('<div class="ops-content">Measures convexity of Vega. Critical for monitoring "Vol of Vol" spikes.</div></div><br>', unsafe_allow_html=True)
     with col2:
-        st.markdown('<div class="ops-card"><div class="ops-tag">Instrument_02</div><div class="ops-title">FLOW RATIO (AGGRESSION)</div>', unsafe_allow_html=True)
-        st.latex(r"Ratio = \frac{\text{Vol}_{\text{Ask}}}{\text{Vol}_{\text{Total}}}")
-        st.markdown('<div class="ops-label">Operational Thresholds</div><div class="ops-content"><b>> 0.70:</b> Extreme Bullish. <br><b>< 0.30:</b> Extreme Bearish.</div></div><br>', unsafe_allow_html=True)
+        st.markdown('<div class="ops-card"><div class="ops-tag">Instrument_02</div><div class="ops-title">ZOMMA</div>', unsafe_allow_html=True)
+        st.latex(r"Zomma = \frac{\partial \Gamma}{\partial \sigma}")
+        st.markdown('<div class="ops-content">Measures sensitivity of Gamma to volatility changes. Essential for timing regime shifts.</div></div><br>', unsafe_allow_html=True)
 
 elif st.session_state.current_page == "ABOUT":
-    st.title("GEXRADAR QUANT TERMINAL v4.4")
+    st.title("GEXRADAR QUANT TERMINAL v4.5")
     st.write("Proprietary Liquidity & Reflexivity Analysis Suite.")
