@@ -208,7 +208,49 @@ if st.session_state.current_page == "DASHBOARD":
     fig_main.update_layout(height=700, template="plotly_dark", showlegend=False, margin=dict(t=10, r=60), hovermode="closest")
     st.plotly_chart(fig_main, use_container_width=True)
 
-    # --- ADDED BACK: INSTITUTIONAL TIME-SERIES ($MM) ---
+    # --- KEY LEVELS TABLE (CSS REPLACED GRADIENT) ---
+    st.markdown("### Key Levels Table")
+    
+    table_df = df.copy()
+    table_df['Net GEX'] = table_df['call_gex'] + table_df['put_gex']
+    table_df['Abs GEX'] = table_df['call_gex'].abs() + table_df['put_gex'].abs()
+    table_df['Dist (%)'] = ((table_df['strike'] - spot_price) / spot_price) * 100
+    
+    f_col1, f_col2, f_col3 = st.columns([1, 1, 2])
+    with f_col1:
+        filter_type = st.selectbox("Rank By", ["Top Abs Exposure", "Top Call Walls", "Top Put Walls", "Closest to Price"])
+    
+    if filter_type == "Top Abs Exposure":
+        display_df = table_df.sort_values('Abs GEX', ascending=False).head(10)
+    elif filter_type == "Top Call Walls":
+        display_df = table_df.sort_values('call_gex', ascending=False).head(10)
+    elif filter_type == "Top Put Walls":
+        display_df = table_df.sort_values('put_gex', ascending=True).head(10)
+    else:
+        table_df['dist_abs'] = table_df['strike'].sub(spot_price).abs()
+        display_df = table_df.sort_values('dist_abs').head(10).drop(columns=['dist_abs'])
+
+    display_df = display_df[['strike', 'es_strike', 'call_gex', 'put_gex', 'Net GEX', 'Abs GEX', 'Dist (%)']]
+    display_df.columns = ['Strike', equiv_label, 'Call GEX', 'Put GEX', 'Net GEX', 'Abs GEX', 'Dist %']
+    
+    # Custom CSS-based coloring function
+    def style_gex_rows(val):
+        color = '#00C805' if val > 0 else '#FF3B3B' if val < 0 else '#8B949E'
+        return f'color: {color}; font-weight: bold;'
+
+    st.dataframe(
+        display_df.style.format({
+            'Strike': '{:.1f}', equiv_label: '{:.2f}', 'Call GEX': '{:,.0f}', 
+            'Put GEX': '{:,.0f}', 'Net GEX': '{:,.0f}', 'Abs GEX': '{:,.0f}', 'Dist %': '{:+.2f}%'
+        }).map(style_gex_rows, subset=['Net GEX']),
+        use_container_width=True, hide_index=True
+    )
+    
+    csv = display_df.to_csv(index=False).encode('utf-8')
+    st.download_button("Export Levels to CSV", data=csv, file_name=f"{asset_toggle}_key_levels.csv", mime='text/csv')
+    st.markdown("---")
+
+    # --- INSTITUTIONAL TIME-SERIES ($MM) ---
     st.markdown("### Institutional Time-Series ($MM)")
     for col, color, title in [('GEX', '#00C805', 'GEX $MM'), ('DEX', '#00FFFF', 'DEX $MM'), ('CNV', '#FF00FF', 'CNV $MM')]:
         fig_ts = make_subplots(specs=[[{"secondary_y": True}]])
@@ -216,7 +258,7 @@ if st.session_state.current_page == "DASHBOARD":
         fig_ts.add_trace(go.Scatter(x=t_series['Time'], y=t_series['Price'], line=dict(color='white', width=1, dash='dot'), opacity=0.4), secondary_y=True)
         st.plotly_chart(fig_ts.update_layout(height=280, template="plotly_dark", showlegend=False, title=title, margin=dict(t=30, b=20)), use_container_width=True)
 
-    # --- ADDED BACK: GREEK SENSITIVITY MATRIX (CHARM/VEGA) ---
+    # --- GREEK SENSITIVITY MATRIX (CHARM/VEGA) ---
     st.markdown("### Greek Sensitivity Matrix")
     c1, c2 = st.columns(2)
     with c1: st.plotly_chart(px.bar(plot_df, x='strike', y='vega', title="VEGA", color_discrete_sequence=['#00FFFF']).update_layout(template="plotly_dark", height=300), use_container_width=True)
