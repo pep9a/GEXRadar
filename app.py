@@ -63,7 +63,6 @@ st.markdown("""
         .data-value { font-family: 'JetBrains Mono'; font-size: 16px; font-weight: 700; }
         .regime-container { padding: 20px; border-radius: 4px; border: 1px solid #30363D; background: #161B22; margin-bottom: 25px; }
         
-        /* ENHANCED OPS GRID */
         .ops-card { background: #161B22; border: 1px solid #30363D; padding: 25px; border-radius: 4px; height: 100%; border-left: 3px solid #00C805; }
         .ops-title { font-family: 'JetBrains Mono'; font-size: 18px; font-weight: 700; color: #FFFFFF; margin-bottom: 5px; }
         .ops-tag { font-family: 'JetBrains Mono'; color: #00C805; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 15px; opacity: 0.8; }
@@ -84,7 +83,7 @@ st.markdown(f"""
     </div>
 """, unsafe_allow_html=True)
 
-# 3. DATA ENGINE (MODIFIED FOR NQ TOGGLE)
+# 3. DATA ENGINE
 st.sidebar.markdown("<p class='sidebar-label'>Terminal Configuration</p>", unsafe_allow_html=True)
 asset_toggle = st.sidebar.radio("Select Asset", ["SPY", "QQQ"], horizontal=True)
 
@@ -99,7 +98,6 @@ if asset_toggle == "SPY":
     equiv_label = "ES Equiv"
     equiv_mult = 10
 else:
-    # QQQ logic with NQ correct pricing (approx 24k)
     strikes = np.arange(495, 520, 0.5)
     spot_price = 508.40
     basis = 145.00 
@@ -108,7 +106,7 @@ else:
     max_pain = 505.0
     vol_trigger = 502.0
     equiv_label = "NQ Equiv"
-    equiv_mult = 47.5 # NQ is roughly 47-48x QQQ price
+    equiv_mult = 47.5
 
 times = pd.date_range(start='9:30', periods=30, freq='10min')
 price_walk = spot_price + np.cumsum(np.random.normal(0, 0.4, 30))
@@ -135,11 +133,9 @@ for s in strikes:
     })
 df = pd.DataFrame(data)
 
-# FIX: Flow Ratio Color Logic
 flow_ratio_val = df["vol_call"].sum()/(df["vol_call"].sum()+df["vol_put"].sum())
 flow_color = "#00C805" if flow_ratio_val >= 0.50 else "#FF3B3B"
 
-# REGIME ADJUSTMENT LOGIC
 is_long_gamma = spot_price > gamma_flip_level
 regime_color = "#00C805" if is_long_gamma else "#FF3B3B"
 regime_label = "STABLE / LONG GAMMA" if is_long_gamma else "VOLATILE / SHORT GAMMA"
@@ -157,7 +153,6 @@ if st.session_state.current_page == "DASHBOARD":
     z_topo = np.outer(np.linspace(1, 0.1, 10), (np.abs(topo['call_gex']) + np.abs(topo['put_gex'])).values)
     st.sidebar.plotly_chart(go.Figure(data=[go.Surface(z=z_topo, x=topo['strike'].values, colorscale='Viridis', showscale=False)]).update_layout(height=180, margin=dict(l=0,r=0,b=0,t=0), template="plotly_dark"), use_container_width=True)
 
-    # REGIME BANNER RENDERING
     st.markdown(f'<div class="regime-container"><div style="font-size: 11px; color: #808495; text-transform: uppercase;">Market Regime: {asset_toggle}</div><div style="font-family: \'JetBrains Mono\'; font-size: 24px; font-weight: 700; color: {regime_color};">{regime_label}</div></div>', unsafe_allow_html=True)
 
     if 'radar_mode' not in st.session_state: st.session_state.radar_mode = "GEX"
@@ -172,10 +167,7 @@ if st.session_state.current_page == "DASHBOARD":
                 st.session_state.radar_mode = mode
                 st.rerun()
 
-    # Dynamic Frame Adjustment: Ensures lines are always visible on the chart
-    chart_min = min(strikes)
-    chart_max = max(strikes)
-    plot_df = df[(df['strike'] >= chart_min) & (df['strike'] <= chart_max)]
+    plot_df = df[(df['strike'] >= min(strikes)) & (df['strike'] <= max(strikes))]
     
     if st.session_state.radar_mode == "SURF":
         days = np.array([1, 7, 30, 60, 90])
@@ -194,10 +186,9 @@ if st.session_state.current_page == "DASHBOARD":
         fig_main.update_layout(scene=dict(xaxis_title="STRIKE", yaxis_title="TIME", zaxis_title="NET DELTA"))
     elif st.session_state.radar_mode == "HEAT":
         dtes = ["0DTE", "1DTE", "7DTE", "14DTE", "30DTE", "60DTE", "90DTE"]
-        strikes_short = plot_df['strike'].values
-        heat_data = np.random.uniform(-500, 1500, (len(strikes_short), len(dtes)))
+        heat_data = np.random.uniform(-500, 1500, (len(plot_df), len(dtes)))
         text_vals = [[f"{val:,.0f}" for val in row] for row in heat_data]
-        fig_main = go.Figure(data=go.Heatmap(z=heat_data, x=dtes, y=strikes_short, colorscale='Magma', text=text_vals, texttemplate="%{text}", customdata=plot_df['es_strike'], hovertemplate=f"Strike: %{{y}}<br>{equiv_label}: %{{customdata:.2f}}<br>DTE: %{{x}}<br>GEX: %{{z:,.0f}}<extra></extra>"))
+        fig_main = go.Figure(data=go.Heatmap(z=heat_data, x=dtes, y=plot_df['strike'], colorscale='Magma', text=text_vals, texttemplate="%{text}", customdata=plot_df['es_strike'], hovertemplate=f"Strike: %{{y}}<br>{equiv_label}: %{{customdata:.2f}}<br>DTE: %{{x}}<br>GEX: %{{z:,.0f}}<extra></extra>"))
         fig_main.update_layout(xaxis_title="EXPIRATION (DTE)", yaxis_title="STRIKE PRICE", yaxis=dict(dtick=1))
     else:
         fig_main = go.Figure()
@@ -210,21 +201,27 @@ if st.session_state.current_page == "DASHBOARD":
             fig_main.add_trace(go.Bar(y=plot_df['strike'], x=-plot_df['vol_put'], orientation='h', marker=dict(color='#FF3B3B', line=dict(color='#FF5555', width=1)), name="PUT VOL", customdata=plot_df['es_strike'], hovertemplate=f"Strike: %{{y}}<br>{equiv_label}: %{{customdata:.2f}}<br>Put Vol: %{{x:,.0f}}<extra></extra>"))
             fig_main.update_layout(xaxis_title="VOLUME (CONTRACTS)", yaxis_title="STRIKE PRICE", bargap=0.1)
         
-        # HORIZONTAL LEVEL MARKERS - PINNED AND LABELED
-        levels = [
-            (gamma_flip_level, "#808495", "FLIP", "dot"), 
-            (spot_price, "#FFF", "SPOT", "solid"), 
-            (momentum_wall, "#00FFFF", "MOM WALL", "dash"), 
-            (max_pain, "#FFD700", "MAX PAIN", "dot"), 
-            (vol_trigger, "#FF3B3B", "VOL TRIGGER", "dashdot")
-        ]
+        levels = [(gamma_flip_level, "#808495", "FLIP", "dot"), (spot_price, "#FFF", "SPOT", "solid"), (momentum_wall, "#00FFFF", "MOM WALL", "dash"), (max_pain, "#FFD700", "MAX PAIN", "dot"), (vol_trigger, "#FF3B3B", "VOL TRIGGER", "dashdot")]
         for lvl, clr, txt, dash in levels:
             fig_main.add_hline(y=lvl, line_dash=dash, line_color=clr, annotation_text=f" {txt}", annotation_position="right")
 
     fig_main.update_layout(height=700, template="plotly_dark", showlegend=False, margin=dict(t=10, r=60), hovermode="closest")
     st.plotly_chart(fig_main, use_container_width=True)
 
-# 5. OPERATIONS PAGE (UNCHANGED)
+    # --- ADDED BACK: INSTITUTIONAL TIME-SERIES ($MM) ---
+    st.markdown("### Institutional Time-Series ($MM)")
+    for col, color, title in [('GEX', '#00C805', 'GEX $MM'), ('DEX', '#00FFFF', 'DEX $MM'), ('CNV', '#FF00FF', 'CNV $MM')]:
+        fig_ts = make_subplots(specs=[[{"secondary_y": True}]])
+        fig_ts.add_trace(go.Scatter(x=t_series['Time'], y=t_series[col], line=dict(color=color, width=3)), secondary_y=False)
+        fig_ts.add_trace(go.Scatter(x=t_series['Time'], y=t_series['Price'], line=dict(color='white', width=1, dash='dot'), opacity=0.4), secondary_y=True)
+        st.plotly_chart(fig_ts.update_layout(height=280, template="plotly_dark", showlegend=False, title=title, margin=dict(t=30, b=20)), use_container_width=True)
+
+    # --- ADDED BACK: GREEK SENSITIVITY MATRIX (CHARM/VEGA) ---
+    st.markdown("### Greek Sensitivity Matrix")
+    c1, c2 = st.columns(2)
+    with c1: st.plotly_chart(px.bar(plot_df, x='strike', y='vega', title="VEGA", color_discrete_sequence=['#00FFFF']).update_layout(template="plotly_dark", height=300), use_container_width=True)
+    with c2: st.plotly_chart(px.line(plot_df, x='strike', y='charm', title="CHARM", color_discrete_sequence=['#FF00FF']).update_layout(template="plotly_dark", height=300), use_container_width=True)
+
 elif st.session_state.current_page == "OPERATIONS":
     st.markdown("<h2 style='font-family: JetBrains Mono; color:#00C805;'>QUANTITATIVE SPECIFICATIONS</h2>", unsafe_allow_html=True)
     col1, col2 = st.columns(2)
@@ -232,14 +229,10 @@ elif st.session_state.current_page == "OPERATIONS":
         st.markdown('<div class="ops-card"><div class="ops-tag">Instrument_01</div><div class="ops-title">NET GAMMA EXPOSURE (GEX)</div>', unsafe_allow_html=True)
         st.latex(r"GEX = \sum \left( OI \cdot \Gamma \cdot 100 \cdot S^2 \right)")
         st.markdown('<div class="ops-label">Operational Thresholds</div><div class="ops-content"><b>Positive GEX:</b> Structural stability. <br><b>Negative GEX:</b> Structural instability.</div></div><br>', unsafe_allow_html=True)
-        st.markdown('<div class="ops-card"><div class="ops-tag">Instrument_03</div><div class="ops-title">GAMMA FLIP & VOL TRIGGER</div>', unsafe_allow_html=True)
-        st.latex(r"\Phi_{0} \rightarrow \sum \Gamma_{C} - \sum \Gamma_{P} = 0")
-        st.markdown('<div class="ops-label">Operational Thresholds</div><div class="ops-content"><b>Above Gamma Flip:</b> Long-bias. <br><b>Below Gamma Flip:</b> Short-bias.</div></div><br>', unsafe_allow_html=True)
     with col2:
         st.markdown('<div class="ops-card"><div class="ops-tag">Instrument_02</div><div class="ops-title">FLOW RATIO (AGGRESSION)</div>', unsafe_allow_html=True)
         st.latex(r"Ratio = \frac{\text{Vol}_{\text{Ask}}}{\text{Vol}_{\text{Total}}}")
         st.markdown('<div class="ops-label">Operational Thresholds</div><div class="ops-content"><b>> 0.70:</b> Extreme Bullish. <br><b>< 0.30:</b> Extreme Bearish.</div></div><br>', unsafe_allow_html=True)
-    st.markdown('<div class="disclaimer-box"><b>QUANTITATIVE RISK DISCLOSURE:</b> Theoretical Greek modeling assumes standard Black-Scholes-Merton hedging behaviors.</div>', unsafe_allow_html=True)
 
 elif st.session_state.current_page == "ABOUT":
     st.title("GEXRADAR QUANT TERMINAL v4.4")
