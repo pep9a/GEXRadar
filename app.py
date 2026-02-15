@@ -97,6 +97,7 @@ if asset_toggle == "SPY":
     equiv_mult = 10
     vvix = 84.20
     iv_rv_spread = 2.45
+    flow_ratio = 0.62 # Simulated SPY Flow
 else:
     strikes = np.arange(495, 520, 0.5)
     spot_price = 508.40
@@ -109,6 +110,7 @@ else:
     equiv_mult = 47.5
     vvix = 92.15
     iv_rv_spread = -1.12
+    flow_ratio = 0.44 # Simulated QQQ Flow
 
 # Time-series generation
 times = pd.date_range(start='9:30', periods=30, freq='10min')
@@ -163,6 +165,9 @@ if st.session_state.current_page == "DASHBOARD":
     st.sidebar.markdown(f'<div class="data-block"><div class="data-label">Vomma (Vol Sens)</div><div class="data-value">{df["vomma"].sum():.2f}</div></div><div class="data-block"><div class="data-label">Zomma (Gamma Accel)</div><div class="data-value">{df["zomma"].sum():.2f}</div></div>', unsafe_allow_html=True)
     
     st.sidebar.markdown("<p class='sidebar-label'>Regime Indicators</p>", unsafe_allow_html=True)
+    # Flow Ratio Added Back
+    fr_color = "#00C805" if flow_ratio > 0.50 else "#FF3B3B"
+    st.sidebar.markdown(f'<div class="data-block"><div class="data-label">Flow Ratio</div><div class="data-value" style="color:{fr_color}">{flow_ratio:.2f}</div></div>', unsafe_allow_html=True)
     st.sidebar.markdown(f'<div class="data-block"><div class="data-label">VVIX (Vol of Vol)</div><div class="data-value" style="color:#00FFFF">{vvix}</div></div><div class="data-block"><div class="data-label">IV-RV Spread</div><div class="data-value">{iv_rv_spread}%</div></div>', unsafe_allow_html=True)
 
     st.sidebar.markdown("<p class='sidebar-label'>Topography Scan</p>", unsafe_allow_html=True)
