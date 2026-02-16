@@ -97,7 +97,6 @@ if asset_toggle == "SPY":
     equiv_mult = 10
     vvix = 84.20
     iv_rv_spread = 2.45
-    flow_ratio = 0.62 # Simulated SPY Flow
 else:
     strikes = np.arange(495, 520, 0.5)
     spot_price = 508.40
@@ -110,7 +109,6 @@ else:
     equiv_mult = 47.5
     vvix = 92.15
     iv_rv_spread = -1.12
-    flow_ratio = 0.44 # Simulated QQQ Flow
 
 # Time-series generation
 times = pd.date_range(start='9:30', periods=30, freq='10min')
@@ -128,14 +126,20 @@ for s in strikes:
     # Second-order Greeks (Simulated)
     vomma = (call_g + put_g) * (dist/spot_price) * 10
     zomma = (call_g - put_g) * (1 / (dist + 0.1))
-    velocity = np.random.normal(0, 5) # Net change in GEX per tick
+    velocity = np.random.normal(0, 5) 
+    
+    # Logic for Flow Calculation (Simulating Buy/Sell side volume)
+    vol_call = np.random.randint(1500, 9000) * call_g
+    vol_put = np.random.randint(1500, 9000) * put_g
     
     data.append({
         'strike': s, 'es_strike': es_val,
         'call_gex': call_g * 6000, 'put_gex': -put_g * 6000, 
         'vanna': (call_g + put_g) * 0.4, 'oi': int((call_g + put_g) * 60000), 
-        'vol_call': np.random.randint(1500, 9000) * call_g, 
-        'vol_put': np.random.randint(1500, 9000) * put_g, 
+        'vol_call': vol_call, 
+        'vol_put': vol_put, 
+        'call_buy_vol': vol_call * 0.6, 'call_sell_vol': vol_call * 0.4,
+        'put_buy_vol': vol_put * 0.4, 'put_sell_vol': vol_put * 0.6,
         'vega': (call_g + put_g) * 0.25, 'charm': (call_g - put_g) * 0.12, 
         'iv': 0.15 + (dist**2 * 0.0008),
         'vomma': vomma, 'zomma': zomma, 'velocity': velocity
@@ -165,10 +169,43 @@ if st.session_state.current_page == "DASHBOARD":
     st.sidebar.markdown(f'<div class="data-block"><div class="data-label">Vomma (Vol Sens)</div><div class="data-value">{df["vomma"].sum():.2f}</div></div><div class="data-block"><div class="data-label">Zomma (Gamma Accel)</div><div class="data-value">{df["zomma"].sum():.2f}</div></div>', unsafe_allow_html=True)
     
     st.sidebar.markdown("<p class='sidebar-label'>Regime Indicators</p>", unsafe_allow_html=True)
-    # Flow Ratio Added Back
-    fr_color = "#00C805" if flow_ratio > 0.50 else "#FF3B3B"
-    st.sidebar.markdown(f'<div class="data-block"><div class="data-label">Flow Ratio</div><div class="data-value" style="color:{fr_color}">{flow_ratio:.2f}</div></div>', unsafe_allow_html=True)
     st.sidebar.markdown(f'<div class="data-block"><div class="data-label">VVIX (Vol of Vol)</div><div class="data-value" style="color:#00FFFF">{vvix}</div></div><div class="data-block"><div class="data-label">IV-RV Spread</div><div class="data-value">{iv_rv_spread}%</div></div>', unsafe_allow_html=True)
+
+    # --- ADVANCED FLOW METRICS (NEW) ---
+    cb_vol = df['call_buy_vol'].sum()
+    ps_vol = df['put_sell_vol'].sum()
+    pb_vol = df['put_buy_vol'].sum()
+    cs_vol = df['call_sell_vol'].sum()
+    
+    # Calculation
+    flow_ratio = (cb_vol + ps_vol) / (cb_vol + ps_vol + pb_vol + cs_vol)
+    net_flow = (cb_vol + ps_vol) - (pb_vol + cs_vol)
+    
+    # Color Interpolation (Red -> Yellow -> Green)
+    if flow_ratio < 0.5:
+        # 0.0 is pure red (255, 59, 59), 0.5 is yellow (255, 215, 0)
+        r = 255
+        g = int(59 + (215 - 59) * (flow_ratio / 0.5))
+        b = int(59 * (1 - (flow_ratio / 0.5)))
+    else:
+        # 0.5 is yellow (255, 215, 0), 1.0 is green (0, 200, 5)
+        r = int(255 * (1 - (flow_ratio - 0.5) / 0.5))
+        g = int(215 + (200 - 215) * ((flow_ratio - 0.5) / 0.5))
+        b = 5
+    
+    flow_color = f'rgb({r}, {g}, {b})'
+    
+    st.sidebar.markdown("<p class='sidebar-label'>Sentiment Flow</p>", unsafe_allow_html=True)
+    st.sidebar.markdown(f"""
+        <div class="data-block">
+            <div class="data-label">Option Flow Ratio</div>
+            <div class="data-value" style="color:{flow_color}">{flow_ratio:.3f}</div>
+        </div>
+        <div class="data-block">
+            <div class="data-label">Net Flow ($MM)</div>
+            <div class="data-value" style="color:{'#00C805' if net_flow > 0 else '#FF3B3B'}">{net_flow/1000:,.1f}M</div>
+        </div>
+    """, unsafe_allow_html=True)
 
     st.sidebar.markdown("<p class='sidebar-label'>Topography Scan</p>", unsafe_allow_html=True)
     topo = df[(df['strike'] > spot_price - 8) & (df['strike'] < spot_price + 8)].sort_values('strike')
